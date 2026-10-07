@@ -79,3 +79,49 @@ async def test_checkmate_ends_the_game_without_calling_engine():
     assert board.is_checkmate()
     assert updates[-1]["game_state"] == GameState.WAITING_HUMAN.value
     assert "CHECKMATE" in updates[-1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_gantry_failure_routes_to_recovery():
+    """A move the gantry couldn't finish leaves the physical board out of sync with the
+    stored position, so it takes the same RECOVERY path as an unreadable scan."""
+    board = chess.Board()
+    vision = vision_after(board, "e2e4")
+
+    async def failing_execute(actions):
+        return {"type": "move_complete", "move_id": "m1", "status": "error", "error": "pickup_failed"}
+
+    loop = GameLoop(board, vision.scan, FirstLegalMoveEngine(), execute_fn=failing_execute)
+    updates = await drain(loop.play_human_turn())
+
+    assert [u["game_state"] for u in updates][-2:] == [
+        GameState.ERROR.value,
+        GameState.RECOVERY.value,
+    ]
+    assert "pickup_failed" in updates[-2]["message"]
+
+
+@pytest.mark.asyncio
+async def test_every_engine_move_of_a_game_compiles_to_gcode():
+    """The decomposition and the compiler are the two halves of one contract; run them
+    together over a whole game so a mismatch can't hide in a rare move type."""
+    from motion.executor import SimulatedExecutor
+
+    board = chess.Board()
+    motion = SimulatedExecutor()
+    loop = GameLoop(board, FakeVision(board).scan, FirstLegalMoveEngine(), execute_fn=motion.execute)
+
+    for _ in range(40):
+        if board.is_game_over():
+            break
+        human = next(iter(board.legal_moves))
+        if human.promotion:  # promotion is a human action, not a gantry action
+            break
+        loop.scan_fn = vision_after(board, human.uci()).scan
+        updates = await drain(loop.play_human_turn())
+        assert updates[-1]["game_state"] != GameState.RECOVERY.value
+
+    assert motion.programs
+    for program in motion.programs:
+        assert program.gcode[:2] == ("G21", "G90")
+        assert program.checksum

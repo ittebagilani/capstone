@@ -282,7 +282,14 @@ pytest tests/test_inference.py::test_en_passant   # one test
 pytest -k "not stockfish"               # skip anything needing the stockfish binary on PATH
 
 uvicorn backend.app:app --reload        # run the backend standalone (ws://localhost:8000/ws)
+
+python scripts/show_gcode.py e2e4       # print the exact machine program for one move
+python scripts/show_gcode.py --fen "<fen>" e1g1 --gcode-only > move.nc
 ```
+
+Motion defaults to simulated (`CXRA_MOTION=sim`): every move is compiled to real G-code and
+logged, nothing moves. `CXRA_MOTION=real` plus `CXRA_GANTRY`, `CXRA_ACTUATOR` and a
+calibrated `coordinates.json` drives the machine. See `motion/README.md`.
 
 `test_engine.py` and `test_app_websocket.py` skip themselves if `stockfish` isn't on `PATH`
 (Homebrew: `/opt/homebrew/bin/stockfish`; `backend/engine.py` resolves it via `shutil.which`,
@@ -297,6 +304,7 @@ Single monorepo — not three repos. Integration phases need PRs that touch mult
 ```
 /vision       # camera, ArUco, homography, classifier, scan()
 /backend      # state machine, inference, Stockfish, FastAPI
+/motion       # actions -> G-code + actuator serial; FluidNC/Arduino links (see motion/README.md)
 /frontend     # React HMI (standalone chess bot app already exists, needs wiring)
 /firmware     # FluidNC config, Arduino sketch, coordinates.json
 /cad          # piece models, mounts, frame
@@ -662,5 +670,9 @@ a decision that lives only in someone's head will be re-litigated in week 10.
 | Accuracy metric          | Board-level, ≥99.9% per-square target                 | 99% per-square = 52% board-level. Per-square alone is misleading.                                     |
 | Gantry: OpenBuilds ACRO  | **Rejected**                                          | Advertised 500×500 is footprint; actual travel 300×300. Insufficient X. Also unavailable.             |
 | Gantry direction         | Frame-only laser engraver kit, ESP32/FluidNC retained | Mass-produced mechanics at low cost; preserves Alex's firmware investment.                            |
+| Motion layer location    | Python package `/motion` on the Pi, called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator Arduino.         |
+| G-code generation        | Compile the whole move up front, then execute         | Printable, hashable, dry-runnable per move; an unexecutable action list is rejected before movement.  |
+| Travel moves             | `G1` with an explicit feed, not `G0`                  | G0 runs at FluidNC's max rate, tuned for a ~200g laser head; the 400–600g pick head skips steps.      |
+| Gantry fault handling    | Stop, report, route to RECOVERY. No auto-retry.       | The board is out of sync with stored state; the human restoring it is the existing safe answer.       |
 
 

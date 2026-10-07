@@ -17,17 +17,25 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from backend.engine import Engine
 from backend.fake_vision import FakeVision
 from backend.state import GameLoop
+from motion.executor import MotionExecutor
+from motion.factory import build_executor
 
 engine = Engine()
+#: sim by default; CXRA_MOTION=real drives the gantry. See motion/factory.py.
+motion = build_executor()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await engine.start()
+    if isinstance(motion, MotionExecutor):
+        await motion.open()
     try:
         yield
     finally:
         await engine.stop()
+        if isinstance(motion, MotionExecutor):
+            await motion.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -43,7 +51,8 @@ async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
     board = chess.Board()
     vision = make_vision(board)
-    loop = GameLoop(board, vision.scan, engine)
+    motion.reset()  # new connection is a new game — graveyard fills from the first slot
+    loop = GameLoop(board, vision.scan, engine, execute_fn=motion.execute)
 
     try:
         while True:

@@ -78,12 +78,22 @@ square. The backend sees one clean result and never knows this happened.
 
 ## 3. Backend → Motion (gantry)
 
-**Transport:** WebSocket or serial from backend to ESP32/motion controller.
+**Transport: DECIDED — an in-process Python call on the Pi, into `/motion`.**
 
 The backend does **not** emit raw G-code directly. It emits a high-level action; a thin
-translation layer (owned by Alex, can live on the ESP32 or as a small Python module the
-backend calls into) converts this into G-code + actuator serial commands. This keeps the
+translation layer converts this into G-code + actuator serial commands. This keeps the
 backend testable without hardware attached.
+
+That translation layer is the `/motion` package. It runs on the Pi, not on the ESP32, for the
+same reason §4 keeps the actuator on its own Arduino: FluidNC stays stock, so nothing here
+requires recompiling Alex's firmware. The backend calls
+`executor.execute(actions) -> move_complete`; swap `SimulatedExecutor` for `MotionExecutor`
+and the same call drives real hardware. See `motion/README.md`.
+
+Actions are compiled to a complete machine program *before* anything moves, so the exact
+G-code for a move can be printed, hashed and diffed with no hardware attached
+(`python scripts/show_gcode.py e2e4`). The same move against the same `coordinates.json`
+always compiles to byte-identical G-code.
 
 **Payload:**
 
@@ -93,12 +103,19 @@ backend testable without hardware attached.
   "move_id": "uuid-v4-string",
   "actions": [
     { "action": "pick_up", "square": "e7" },
-    { "action": "move_to_graveyard" },
+    { "action": "move_to_graveyard", "color": "black" },
     { "action": "pick_up", "square": "e2" },
     { "action": "place", "square": "e4" }
   ]
 }
 ```
+
+`move_to_graveyard` carries an **optional** `color` (`"white"` | `"black"`): the colour of the
+piece being removed. Slot *assignment* stays the motion layer's business — the backend still
+never names a slot — but only the backend knows what colour the captured piece was, and
+without it captured pieces cannot be filed into matching columns. The field is optional: if
+it is absent the motion layer still allocates the next free slot, so an older sender keeps
+working.
 
 - A single chess move decomposes into one or more `pick_up` / `place` / `move_to_graveyard`
   steps. Examples:
@@ -125,6 +142,20 @@ backend testable without hardware attached.
 
 `status` is `"ok"` or `"error"`; if `"error"`, `error` is a short string (e.g.
 `"pickup_failed"`, `"limit_switch_fault"`) the backend surfaces to the frontend.
+
+An `"error"` puts the backend into `error` → `recovery`: the move stopped part-way, so the
+physical board no longer matches the stored position and a human has to restore it. Stored
+state stays authoritative either way. Strings the motion layer emits today:
+
+| `error` | Cause |
+|---|---|
+| `invalid_actions` | The action list is not executable. Nothing moved. Backend bug. |
+| `gcode_rejected` | FluidNC answered `error:N` to a line. |
+| `limit_switch_fault` | FluidNC alarmed, or the actuator reported that fault. |
+| `gantry_timeout` | No `ok`, or still not `Idle` inside the timeout. |
+| `actuator_timeout` | No `OK` / `FAULT:` from the Arduino inside the timeout. |
+| `link_lost` | Serial or socket died mid-move. |
+| *anything else* | Passed through verbatim from the Arduino's `FAULT:<reason>`. |
 
 ---
 
@@ -308,6 +339,11 @@ you have real confidence distributions; put the tuned number here and stop touch
 | Piece identification | Not performed — occupancy + colour only | Move inference is sufficient and far more reliable. Piece-ID is a stretch goal, off the critical path. |
 | Promotion | Human places the piece, prompted by HMI | Four promotion moves are indistinguishable in occupancy space; gantry piece-swapping is out of scope. |
 | Motion command level | High-level actions, not raw G-code | Keeps the backend testable with no hardware and puts G-code generation behind one owner. |
+| Motion layer location | Python package on the Pi (`/motion`), called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator Arduino. |
+| G-code generation | Compile the whole move up front, then execute | A move can be printed, hashed and dry-run before anything moves; an unexecutable action list is rejected before the machine is holding a piece. |
+| Move repeatability | Fixed-width coordinates + sequential graveyard slots + per-move checksum | Same move + same `coordinates.json` = byte-identical G-code, so a logged failure is reproducible. |
+| Graveyard slot assignment | Motion layer allocates; backend supplies an optional `color` | Only the backend knows the captured piece's colour; only the motion layer knows which slots are free. |
+| Gantry fault handling | Stop, report, route to `recovery`. No auto-retry. | The board is out of sync with stored state; a human restoring it is the existing, safe answer. |
 
 **Open items blocking Phase 1 completion:**
 

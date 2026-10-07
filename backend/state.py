@@ -33,9 +33,11 @@ class GameState(str, Enum):
 
 
 async def _simulate_execute(actions: list[dict]) -> dict:
-    """Default motion executor: no gantry exists yet, so ack immediately.
+    """Default motion executor: ack immediately, move nothing.
 
-    Swap for the real call into Alex's motion layer once it exists (INTERFACES.md §3).
+    Kept as the zero-dependency default for unit tests. For anything resembling a real run
+    use `motion.SimulatedExecutor().execute`, which compiles the actions into real G-code and
+    so catches decomposition bugs; `motion.MotionExecutor` is the same signature on hardware.
     """
     return {"type": "move_complete", "status": "ok", "error": None}
 
@@ -67,6 +69,16 @@ class GameLoop:
             "difficulty": self.difficulty,
         }
 
+    def _color_at(self, square: int) -> str:
+        """Colour of the piece standing on `square` right now, for the graveyard hint.
+
+        Optional field on `move_to_graveyard` (INTERFACES.md §3): the motion layer needs it
+        to file a captured piece in the matching graveyard column, and it is the only side
+        that cannot work it out — the backend is the one holding the position.
+        """
+        piece = self.board.piece_at(square)
+        return "white" if piece.color else "black"
+
     def _actions_for(self, move: chess.Move) -> list[dict]:
         """Decompose one chess move into gantry/actuator steps (INTERFACES.md §3)."""
         from_sq, to_sq = chess.square_name(move.from_square), chess.square_name(move.to_square)
@@ -84,12 +96,10 @@ class GameLoop:
             ]
 
         if self.board.is_en_passant(move):
-            captured_sq = chess.square_name(
-                chess.square(chess.square_file(move.to_square), chess.square_rank(move.from_square))
-            )
+            captured = chess.square(chess.square_file(move.to_square), chess.square_rank(move.from_square))
             return [
-                {"action": "pick_up", "square": captured_sq},
-                {"action": "move_to_graveyard"},
+                {"action": "pick_up", "square": chess.square_name(captured)},
+                {"action": "move_to_graveyard", "color": self._color_at(captured)},
                 {"action": "pick_up", "square": from_sq},
                 {"action": "place", "square": to_sq},
             ]
@@ -97,7 +107,7 @@ class GameLoop:
         if self.board.is_capture(move):
             return [
                 {"action": "pick_up", "square": to_sq},
-                {"action": "move_to_graveyard"},
+                {"action": "move_to_graveyard", "color": self._color_at(move.to_square)},
                 {"action": "pick_up", "square": from_sq},
                 {"action": "place", "square": to_sq},
             ]
@@ -181,7 +191,17 @@ class GameLoop:
 
         self.state = GameState.EXECUTING
         yield self._update("Hands off the board")
-        await self.execute_fn(actions)
+        result = await self.execute_fn(actions) or {}
+
+        if result.get("status") == "error":
+            # The gantry stopped mid-move, so the physical board no longer matches the stored
+            # position. Stored state stays authoritative (CLAUDE.md §3.1) and RECOVERY shows
+            # it to the human to restore — same path as a failed scan.
+            self.state = GameState.ERROR
+            yield self._update(f"Move failed: {result.get('error') or 'unknown'}")
+            self.state = GameState.RECOVERY
+            yield self._update("Restore the board to the displayed position and confirm")
+            return
 
         if self.board.is_game_over():
             self.state = GameState.WAITING_HUMAN
