@@ -282,7 +282,9 @@ pytest tests/test_inference.py          # one file
 pytest tests/test_inference.py::test_en_passant   # one test
 pytest -k "not stockfish"               # skip anything needing the stockfish binary on PATH
 
-uvicorn backend.app:app --reload        # run the backend standalone (ws://localhost:8000/ws)
+uvicorn backend.app:app --host 0.0.0.0  # backend + built HMI at http://<pi>:8000/ (?dev = simulate moves)
+CXRA_VISION=real uvicorn backend.app:app --host 0.0.0.0   # use the Pi camera instead of FakeVision
+(cd frontend && npm install && npm run build)               # rebuild the HMI after frontend changes
 
 python scripts/show_gcode.py e2e4       # print the exact machine program for one move
 python scripts/show_gcode.py --fen "<fen>" e1g1 --gcode-only > move.nc
@@ -676,5 +678,8 @@ a decision that lives only in someone's head will be re-litigated in week 10.
 | G-code generation        | Compile the whole move up front, then execute         | Printable, hashable, dry-runnable per move; an unexecutable action list is rejected before movement.  |
 | Travel moves             | `G1` with an explicit feed, not `G0`                  | G0 runs at FluidNC's max rate, tuned for a ~200g laser head; the 400–600g pick head skips steps.      |
 | Gantry fault handling    | Stop, report, route to RECOVERY. No auto-retry.       | The board is out of sync with stored state; the human restoring it is the existing safe answer.       |
+| Square classifier (baseline) | Diff each square against a warped empty-board reference | Lighting falls off across the board (light h-file square darker than green a-file one); no fixed HSV cut works. |
+| Robot move verification  | Re-scan after every gantry move, mismatch → RECOVERY  | A dropped piece otherwise surfaces a turn later as a baffling "illegal" human move.                  |
+| HMI hosting              | Vite build served by FastAPI at `/`                   | One process at boot, no internet needed on demo day.                                                   |
 
 

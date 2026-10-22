@@ -12,3 +12,4 @@ build/
 vision/calibration.json
 vision/empty_reference.png
 logs/
+frontend/dist/

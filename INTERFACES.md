@@ -257,6 +257,26 @@ handler with a serial-line reader and everything else stays.
 - `game_state`: drives what the frontend UI shows (spinner during `thinking`, "hands off"
   banner during `executing`, restore prompt during `recovery`).
 - `message`: human-readable string for the status banner, backend decides exact wording.
+- `human_color`: `"white"` | `"black"` — which side the human plays; the HMI flips the board
+  for black. Added Oct 22.
+
+The backend sends one `state_update` on connect (`idle` until a game starts).
+
+**Frontend → backend messages** (Oct 22; `backend/app.py` docstring is the reference):
+
+| Message | When | Effect |
+|---|---|---|
+| `{"type": "new_game", "human_color": "white", "difficulty": 5}` | any time | Reset, scan to check the start position (mismatch → `recovery`), robot moves first if human is black |
+| `{"type": "attempt_move"}` | `waiting_human` | Human is done moving — scan and infer. Provisional trigger: HMI button now, physical button later |
+| `{"type": "promotion_choice", "piece": "q"}` | `pause_for_promotion` | See below |
+| `{"type": "recovery_confirm"}` | `recovery` | Board restored — re-scan |
+| `{"type": "set_difficulty", "level": 7}` | any time | 1–10, next engine move |
+| `{"type": "recalibrate"}` | `idle`, board **empty** | Re-detect markers, save homography + empty reference |
+| `{"type": "debug_move", "uci": "e2e4"}` | `waiting_human`, fake vision only | Simulates the human moving a piece |
+
+After every robot move the backend re-scans and compares against the stored position; a
+mismatch is `error` → `recovery` naming the wrong squares (shown during `scanning` as
+"Checking the robot's move..."). Game over → `idle`.
 
 ### State machine — canonical values
 
