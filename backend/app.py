@@ -9,6 +9,7 @@ Inbound message types:
 *some* trigger for "human is done moving" and the doc doesn't decide one (sensor? poll
 loop? HMI button?). Treat these as provisional until that's resolved there.
 """
+import os
 from contextlib import asynccontextmanager
 
 import chess
@@ -42,7 +43,11 @@ app = FastAPI(lifespan=lifespan)
 
 
 def make_vision(board: chess.Board):
-    """Swap for the real vision.scan() once the camera pipeline lands (CLAUDE.md §3.3)."""
+    """CXRA_VISION=fake (default) or real — the real camera scan() is the one-line swap of
+    CLAUDE.md §3.3. Anything with a .scan() -> dict works; vision.live is a module."""
+    if os.environ.get("CXRA_VISION", "fake").lower() == "real":
+        import vision.live  # Pi only: picamera2
+        return vision.live
     return FakeVision(board)
 
 
