@@ -7,7 +7,11 @@ rename without updating INTERFACES.md and the frontend together.
 (CLAUDE.md §3.3): swap FakeVision and a stub executor for the real ones at the call site.
 """
 import asyncio
+import json
+import logging
+from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 import chess
@@ -19,6 +23,8 @@ MAX_SCAN_ATTEMPTS = 3
 SCAN_RETRY_DELAY_S = 0.3
 
 PROMOTION_PIECES = {"q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "n": chess.KNIGHT}
+
+log = logging.getLogger("cxra.backend")
 
 
 class GameState(str, Enum):
@@ -50,12 +56,21 @@ class GameLoop:
         engine,
         execute_fn: Callable[[list[dict]], Awaitable[dict]] = _simulate_execute,
         difficulty: int = 5,
+        human_color: Optional[chess.Color] = None,
+        verify_robot_moves: bool = False,
+        scan_log: Optional[Path] = None,
     ):
+        """`verify_robot_moves`: re-scan after every gantry move and route a mismatch to
+        RECOVERY. Off by default only because unit-test fakes don't model the robot moving
+        pieces; app.py turns it on. `scan_log`: JSONL file every scan attempt is appended to."""
         self.board = board
         self.scan_fn = scan_fn
         self.engine = engine
         self.execute_fn = execute_fn
         self.difficulty = difficulty
+        self.human_color = board.turn if human_color is None else human_color
+        self.verify_robot_moves = verify_robot_moves
+        self.scan_log = scan_log
         self.state = GameState.WAITING_HUMAN
         self.prev_squares = board_to_squares(board)
         self._pending_matches: Optional[list[chess.Move]] = None
@@ -67,7 +82,22 @@ class GameLoop:
             "game_state": self.state.value,
             "message": message,
             "difficulty": self.difficulty,
+            "human_color": "white" if self.human_color == chess.WHITE else "black",
         }
+
+    def snapshot(self, message: str) -> dict:
+        """Current state as a state_update, without changing anything — for a new connection."""
+        return self._update(message)
+
+    def _log(self, record: dict) -> None:
+        """Append one JSON line. Every scan attempt is logged pass or fail, with all 64
+        confidences (INTERFACES.md §7) — the debugging trail and the report's accuracy data."""
+        record = {"time": datetime.now(timezone.utc).isoformat(), "fen": self.board.fen(), **record}
+        log.debug("%s", record)
+        if self.scan_log is not None:
+            self.scan_log.parent.mkdir(parents=True, exist_ok=True)
+            with self.scan_log.open("a") as f:
+                f.write(json.dumps(record) + "\n")
 
     def _color_at(self, square: int) -> str:
         """Colour of the piece standing on `square` right now, for the graveyard hint.
@@ -114,11 +144,17 @@ class GameLoop:
 
         return [{"action": "pick_up", "square": from_sq}, {"action": "place", "square": to_sq}]
 
-    async def _scan_with_retry(self) -> dict:
+    async def _scan_with_retry(self, purpose: str) -> dict:
+        """`purpose` (human_move / verify_robot / sync) only labels the log line."""
         best = None
         for attempt in range(MAX_SCAN_ATTEMPTS):
-            scan = self.scan_fn()
-            if min(scan["confidence"]) >= CONFIDENCE_THRESHOLD:
+            # A real scan is ~200ms of camera I/O; off the event loop so the socket stays live.
+            scan = await asyncio.to_thread(self.scan_fn)
+            passed = min(scan["confidence"]) >= CONFIDENCE_THRESHOLD
+            self._log({"event": "scan", "purpose": purpose, "attempt": attempt + 1,
+                       "passed_threshold": passed, "scan_id": scan.get("scan_id"),
+                       "squares": scan["squares"], "confidence": scan["confidence"]})
+            if passed:
                 return scan
             if best is None or sum(scan["confidence"]) > sum(best["confidence"]):
                 best = scan
@@ -128,11 +164,17 @@ class GameLoop:
 
     async def play_human_turn(self) -> AsyncIterator[dict]:
         """WAITING_HUMAN -> SCANNING -> THINKING | PAUSE_FOR_PROMOTION | ERROR -> RECOVERY."""
+        if self.state != GameState.WAITING_HUMAN or self.board.turn != self.human_color:
+            yield self._update("Not your turn right now")
+            return
+
         self.state = GameState.SCANNING
         yield self._update("Reading board...")
 
-        scan = await self._scan_with_retry()
+        scan = await self._scan_with_retry("human_move")
         move_or_matches, status = infer_move(self.prev_squares, scan["squares"], self.board)
+        self._log({"event": "inference", "scan_id": scan.get("scan_id"), "status": status,
+                   "move": move_or_matches.uci() if status == "ok" else None})
 
         if status == "no_change":
             self.state = GameState.WAITING_HUMAN
@@ -169,19 +211,68 @@ class GameLoop:
         async for update in self._engine_turn():
             yield update
 
+    async def new_game(self, human_color: chess.Color = chess.WHITE,
+                       difficulty: Optional[int] = None) -> AsyncIterator[dict]:
+        """IDLE (or anything) -> check the physical start position -> human's turn, or the
+        robot's first move when the human plays black."""
+        self.board.reset()  # in place: FakeVision/app may hold a reference to this board
+        self.prev_squares = board_to_squares(self.board)
+        self.human_color = human_color
+        self._pending_matches = None
+        if difficulty is not None:
+            await self.set_difficulty(difficulty)
+        async for update in self._sync("Set up the starting position, then confirm"):
+            yield update
+
+    async def set_difficulty(self, level: int) -> None:
+        self.difficulty = max(1, min(10, int(level)))
+        if hasattr(self.engine, "configure_difficulty"):
+            await self.engine.configure_difficulty(self.difficulty)
+
     async def retry_scan(self) -> AsyncIterator[dict]:
         """Human confirmed the board has been physically restored after RECOVERY."""
-        self.state = GameState.WAITING_HUMAN
-        async for update in self.play_human_turn():
-            yield update
+        if self.board.turn == self.human_color:
+            # The human may have restored the board *and* made their move — accept either.
+            self.state = GameState.WAITING_HUMAN
+            async for update in self.play_human_turn():
+                yield update
+        else:
+            async for update in self._sync("Board still doesn't match — fix it, then confirm"):
+                yield update
+
+    async def _sync(self, mismatch_message: str) -> AsyncIterator[dict]:
+        """Physical board must equal the stored position exactly; then whoever is to move
+        moves. Used at game start and after a recovery when it's the robot's turn."""
+        self.state = GameState.SCANNING
+        yield self._update("Checking the board...")
+        scan = await self._scan_with_retry("sync")
+        wrong = self._mismatched_squares(scan)
+        if wrong:
+            self.state = GameState.RECOVERY
+            yield self._update(f"{mismatch_message} (check {', '.join(wrong)})")
+            return
+        if self.board.turn == self.human_color:
+            self.state = GameState.WAITING_HUMAN
+            yield self._update("Your turn")
+        else:
+            async for update in self._engine_turn():
+                yield update
+
+    def _mismatched_squares(self, scan: dict) -> list[str]:
+        return [chess.square_name(i) for i, (want, saw)
+                in enumerate(zip(self.prev_squares, scan["squares"])) if want != saw]
+
+    def _game_over_update(self) -> dict:
+        self.state = GameState.IDLE
+        outcome = self.board.outcome()
+        return self._update(f"Game over: {outcome.termination.name} ({outcome.result()})")
 
     async def _engine_turn(self) -> AsyncIterator[dict]:
         self.state = GameState.THINKING
         yield self._update("Thinking...")
 
         if self.board.is_game_over():
-            self.state = GameState.WAITING_HUMAN
-            yield self._update(f"Game over: {self.board.outcome().termination.name}")
+            yield self._game_over_update()
             return
 
         move = await self.engine.play(self.board)
@@ -203,9 +294,21 @@ class GameLoop:
             yield self._update("Restore the board to the displayed position and confirm")
             return
 
+        if self.verify_robot_moves:
+            # A dropped or misplaced piece would otherwise surface a turn later as a baffling
+            # "illegal move" against the human. Same RECOVERY path as a gantry fault.
+            self.state = GameState.SCANNING
+            yield self._update("Checking the robot's move...")
+            wrong = self._mismatched_squares(await self._scan_with_retry("verify_robot"))
+            if wrong:
+                self.state = GameState.ERROR
+                yield self._update(f"Robot move didn't land as expected: {', '.join(wrong)}")
+                self.state = GameState.RECOVERY
+                yield self._update("Fix the board to match the displayed position, then confirm")
+                return
+
         if self.board.is_game_over():
-            self.state = GameState.WAITING_HUMAN
-            yield self._update(f"Game over: {self.board.outcome().termination.name}")
+            yield self._game_over_update()
             return
 
         self.state = GameState.WAITING_HUMAN

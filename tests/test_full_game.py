@@ -68,7 +68,7 @@ async def test_full_game_castle_promotion_checkmate():
 
     assert saw_promotion_pause, "promotion never triggered pause_for_promotion"
     assert board.is_checkmate()
-    assert all_updates[-1]["game_state"] == GameState.WAITING_HUMAN.value
+    assert all_updates[-1]["game_state"] == GameState.IDLE.value  # game over = no game in progress
     assert "CHECKMATE" in all_updates[-1]["message"]
 
     seen_states = [u["game_state"] for u in all_updates]

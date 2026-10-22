@@ -11,3 +11,4 @@ build/
 # per-rig, regenerated on the Pi whenever camera/board/lighting move
 vision/calibration.json
 vision/empty_reference.png
+logs/

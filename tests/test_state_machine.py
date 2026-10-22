@@ -7,6 +7,8 @@ hand-verify, and the state machine's behavior doesn't depend on how the position
 Uses a deterministic stub in place of Stockfish so these stay fast and don't depend on the
 Stockfish binary being on PATH; backend/engine.py itself is exercised in test_engine.py.
 """
+import json
+
 import chess
 import pytest
 
@@ -77,7 +79,7 @@ async def test_checkmate_ends_the_game_without_calling_engine():
     updates = await drain(loop.play_human_turn())
 
     assert board.is_checkmate()
-    assert updates[-1]["game_state"] == GameState.WAITING_HUMAN.value
+    assert updates[-1]["game_state"] == GameState.IDLE.value
     assert "CHECKMATE" in updates[-1]["message"]
 
 
@@ -125,3 +127,41 @@ async def test_every_engine_move_of_a_game_compiles_to_gcode():
     for program in motion.programs:
         assert program.gcode[:2] == ("G21", "G90")
         assert program.checksum
+
+
+@pytest.mark.asyncio
+async def test_robot_move_that_didnt_land_routes_to_recovery(tmp_path):
+    """The gantry acked, but the camera still sees the pre-move board: a dropped piece must
+    stop the game now, not surface next turn as an "illegal" human move."""
+    board = chess.Board()
+    physical = vision_after(board, "e2e4")  # never updated with the robot's reply
+    log = tmp_path / "scans.jsonl"
+    loop = GameLoop(board, physical.scan, FirstLegalMoveEngine(),
+                    verify_robot_moves=True, scan_log=log)
+
+    updates = await drain(loop.play_human_turn())
+
+    assert [u["game_state"] for u in updates][-2:] == [GameState.ERROR.value, GameState.RECOVERY.value]
+    assert "didn't land" in updates[-2]["message"]
+
+    # Human fixes the board to the displayed position and confirms.
+    physical.set_board(board.copy())
+    updates = await drain(loop.retry_scan())
+    assert updates[-1]["game_state"] == GameState.WAITING_HUMAN.value
+
+    purposes = [json.loads(line).get("purpose") for line in log.read_text().splitlines()]
+    assert {"human_move", "verify_robot"} <= set(purposes)
+
+
+@pytest.mark.asyncio
+async def test_new_game_waits_for_correct_setup():
+    board = chess.Board()
+    physical = FakeVision(chess.Board("8/8/8/8/8/8/8/4K2k w - - 0 1"))  # pieces not set up
+    loop = GameLoop(board, physical.scan, FirstLegalMoveEngine())
+
+    updates = await drain(loop.new_game(chess.WHITE))
+    assert updates[-1]["game_state"] == GameState.RECOVERY.value
+
+    physical.set_board(chess.Board())
+    updates = await drain(loop.retry_scan())
+    assert updates[-1]["game_state"] == GameState.WAITING_HUMAN.value
