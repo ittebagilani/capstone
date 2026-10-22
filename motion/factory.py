@@ -7,7 +7,7 @@ Real mode reads:
 
     CXRA_GANTRY=192.168.1.50        FluidNC over WiFi (telnet, port 23)
     CXRA_GANTRY=/dev/ttyUSB0        FluidNC over USB serial
-    CXRA_ACTUATOR=/dev/ttyACM0      Akil's Arduino
+    CXRA_ACTUATOR=/dev/ttyACM0      Akil's actuator ESP32
     CXRA_COORDINATES=/path.json     defaults to firmware/coordinates.json
 """
 import os

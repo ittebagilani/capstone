@@ -1,4 +1,7 @@
-"""Generate the 4 ArUco corner markers to print and laminate (CLAUDE.md §7.2: DICT_4X4_50,
+"""SUPERSEDED by generate_board.py, which prints the markers at the exact positions
+homography.MARKER_CENTERS_SQ expects. Loose markers from this sheet won't warp correctly.
+
+Generate the 4 ArUco corner markers to print and laminate (CLAUDE.md §7.2: DICT_4X4_50,
 IDs 0-3, placed outside the 8x8 grid on the board's border).
 
 Corner assignment (not decided anywhere else — fixing it here since homography needs it):

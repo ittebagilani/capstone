@@ -82,7 +82,7 @@ a piece dragged across the board. An unknown square fails here too.
 
 **The safety prologue.** Every program opens with `UP`. A program has to be safe to start
 from any machine state, and an XY move with the actuator lowered rakes the magnet across the
-pieces. The Arduino treats an `UP` it is already at as a no-op.
+pieces. The actuator treats an `UP` it is already at as a no-op.
 
 ### 4. Execution
 

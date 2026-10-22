@@ -28,7 +28,7 @@ actuator picks/places → repeat, for a full game without intervention.
 | -------------------------------------- | -------------------------------------------------------------------- |
 | **Itteba** (primary user of this repo) | Vision system, backend, move inference, frontend integration         |
 | **Alex (Alexandre Carpen)**            | XY gantry, motion control, FluidNC, square→mm coordinate table       |
-| **Akil (Akil Srirama)**                | Telescopic Z actuator, end effector, electromagnet, Arduino firmware |
+| **Akil (Akil Srirama)**                | Telescopic Z actuator, end effector, electromagnet, actuator ESP32 firmware |
 
 
 Because three people build in parallel, **interfaces are contracts.** Changing a payload
@@ -45,11 +45,11 @@ Raspberry Pi  (backend + vision + motion sequencing — the sole orchestrator)
  │
  ├── in-process Python call ──→ vision.scan()          # no network layer
  ├── WiFi / serial ──────────→ ESP32 running FluidNC ─→ gantry XY
- ├── USB serial ─────────────→ Arduino ────────────────→ Z actuator + electromagnet
+ ├── USB serial ─────────────→ ESP32 #2 (Akil) ─────────→ Z actuator + electromagnet
  └── WebSocket ─────────────→ React frontend (HMI)
 ```
 
-The Pi sequences everything. The ESP32 and the Arduino never talk to each other.
+The Pi sequences everything. The two ESP32s (gantry, actuator) never talk to each other.
 
 ---
 
@@ -98,9 +98,10 @@ so a push protocol buys nothing and costs a process, a port, and a failure mode.
 **Call pattern is pull-based.** The backend requests a scan when its state machine reaches
 SCANNING or SCAN_VERIFY. Vision never pushes unprompted.
 
-### 3.4 Actuator stays a dumb serial slave on its own Arduino **[LOCKED]**
+### 3.4 Actuator stays a dumb serial slave on its own microcontroller **[LOCKED]**
 
-Akil's existing Arduino remains, driven over USB serial from the Pi.
+Akil's own ESP32 (was an Arduino until Oct 14) stays a separate dumb slave, driven over USB
+serial from the Pi. It does **not** run FluidNC and never talks to the gantry ESP32.
 
 Rejected: folding actuator control into FluidNC on the ESP32 via custom M-codes. That
 requires recompiling FluidNC with a plugin and welds Akil's subsystem to Alex's firmware
@@ -304,9 +305,9 @@ Single monorepo — not three repos. Integration phases need PRs that touch mult
 ```
 /vision       # camera, ArUco, homography, classifier, scan()
 /backend      # state machine, inference, Stockfish, FastAPI
-/motion       # actions -> G-code + actuator serial; FluidNC/Arduino links (see motion/README.md)
+/motion       # actions -> G-code + actuator serial; FluidNC/actuator links (see motion/README.md)
 /frontend     # React HMI (standalone chess bot app already exists, needs wiring)
-/firmware     # FluidNC config, Arduino sketch, coordinates.json
+/firmware     # FluidNC config, actuator ESP32 sketch, coordinates.json
 /cad          # piece models, mounts, frame
 /tests
 INTERFACES.md # the contract — treat as authoritative alongside this file
@@ -660,8 +661,9 @@ a decision that lives only in someone's head will be re-litigated in week 10.
 | Vision→Backend transport | In-process Python call                                | Same device, same language. Removes a process, a protocol, a boot dependency. Backend stays mockable. |
 | Scan initiation          | Pull-based                                            | Two scan moments per turn; no stream to justify push.                                                 |
 | Frame handling           | 3-frame majority vote inside `scan()`                 | ~200ms for a large reliability win; invisible to callers.                                             |
-| Actuator controller      | Separate Arduino, USB serial from Pi                  | Preserves Akil's working code; decouples his subsystem from Alex's FluidNC during parallel work.      |
-| Orchestration            | Pi sequences both controllers                         | One brain; no ESP32↔Arduino cross-talk to debug.                                                      |
+| Actuator controller      | Separate ESP32 (was Arduino), USB serial from Pi                  | Preserves Akil's working code; decouples his subsystem from Alex's FluidNC during parallel work.      |
+| Orchestration            | Pi sequences both controllers                         | One brain; no gantry↔actuator cross-talk to debug.                                                      |
+| Actuator chip            | ESP32 instead of Arduino (Oct 14)                     | Akil's switch. Same USB serial line protocol, no Pi code change. Still separate from the FluidNC ESP32. |
 | Gantry move completion   | Poll FluidNC `?` until `Idle`                         | Fixed sleeps break when acceleration is retuned.                                                      |
 | Scan validity            | Legal-move match, not confidence                      | Chess logic is a stronger validator than classifier certainty.                                        |
 | Move inference method    | Brute-force simulate all legal moves                  | Microseconds; handles castling/en passant/promotion for free.                                         |
@@ -670,7 +672,7 @@ a decision that lives only in someone's head will be re-litigated in week 10.
 | Accuracy metric          | Board-level, ≥99.9% per-square target                 | 99% per-square = 52% board-level. Per-square alone is misleading.                                     |
 | Gantry: OpenBuilds ACRO  | **Rejected**                                          | Advertised 500×500 is footprint; actual travel 300×300. Insufficient X. Also unavailable.             |
 | Gantry direction         | Frame-only laser engraver kit, ESP32/FluidNC retained | Mass-produced mechanics at low cost; preserves Alex's firmware investment.                            |
-| Motion layer location    | Python package `/motion` on the Pi, called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator Arduino.         |
+| Motion layer location    | Python package `/motion` on the Pi, called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator controller.         |
 | G-code generation        | Compile the whole move up front, then execute         | Printable, hashable, dry-runnable per move; an unexecutable action list is rejected before movement.  |
 | Travel moves             | `G1` with an explicit feed, not `G0`                  | G0 runs at FluidNC's max rate, tuned for a ~200g laser head; the 400–600g pick head skips steps.      |
 | Gantry fault handling    | Stop, report, route to RECOVERY. No auto-retry.       | The board is out of sync with stored state; the human restoring it is the existing safe answer.       |

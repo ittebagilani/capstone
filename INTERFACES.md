@@ -85,7 +85,7 @@ translation layer converts this into G-code + actuator serial commands. This kee
 backend testable without hardware attached.
 
 That translation layer is the `/motion` package. It runs on the Pi, not on the ESP32, for the
-same reason §4 keeps the actuator on its own Arduino: FluidNC stays stock, so nothing here
+same reason §4 keeps the actuator on its own controller: FluidNC stays stock, so nothing here
 requires recompiling Alex's firmware. The backend calls
 `executor.execute(actions) -> move_complete`; swap `SimulatedExecutor` for `MotionExecutor`
 and the same call drives real hardware. See `motion/README.md`.
@@ -153,15 +153,15 @@ state stays authoritative either way. Strings the motion layer emits today:
 | `gcode_rejected` | FluidNC answered `error:N` to a line. |
 | `limit_switch_fault` | FluidNC alarmed, or the actuator reported that fault. |
 | `gantry_timeout` | No `ok`, or still not `Idle` inside the timeout. |
-| `actuator_timeout` | No `OK` / `FAULT:` from the Arduino inside the timeout. |
+| `actuator_timeout` | No `OK` / `FAULT:` from the actuator inside the timeout. |
 | `link_lost` | Serial or socket died mid-move. |
-| *anything else* | Passed through verbatim from the Arduino's `FAULT:<reason>`. |
+| *anything else* | Passed through verbatim from the actuator's `FAULT:<reason>`. |
 
 ---
 
 ## 4. Backend/Motion → Actuator (Z-axis + electromagnet)
 
-**Transport: DECIDED — keep Akil's existing Arduino as a dumb serial slave, driven over USB
+**Transport: DECIDED — Akil's own ESP32 (not the FluidNC one) is a dumb serial slave, driven over USB
 serial directly from the Pi. The Pi is the sole orchestrator.**
 
 Rejected alternative: folding actuator control into FluidNC on the ESP32 via custom M-codes.
@@ -174,7 +174,7 @@ The resulting topology:
 ```
 Pi (backend + vision + motion translation)
  ├── WiFi  → ESP32 running FluidNC → gantry XY
- └── USB serial → Arduino → Z actuator + electromagnet
+ └── USB serial → ESP32 #2 (Akil) → Z actuator + electromagnet
 ```
 
 The Pi sequences both. Critical consequence: **the motion layer must wait for the gantry to
@@ -182,7 +182,7 @@ finish moving before sending `DOWN`.** With FluidNC, send the G0, wait for `ok`,
 `?` status until the machine reports `Idle`. Do not use a fixed `sleep()` — that breaks the
 moment you retune acceleration.
 
-This also means Akil's existing button-driven Arduino code survives; he replaces the button
+This also means Akil's existing button-driven code survives; he replaces the button
 handler with a serial-line reader and everything else stays.
 
 **Commands (plain strings, one per line, actuator ACKs each):**
@@ -331,15 +331,16 @@ you have real confidence distributions; put the tuned number here and stop touch
 | Vision→Backend transport | In-process Python call | Same device, same language; removes a process, a protocol, and a boot dependency. Backend stays mockable for hardware-free testing. |
 | Scan initiation | Pull-based, backend requests | Only two scan moments per turn. No stream to justify a push model. |
 | Frame handling | 3-frame majority vote inside `scan()` | ~200ms for a large reliability win; invisible to callers. |
-| Actuator controller | Separate Arduino, USB serial from Pi | Preserves Akil's working code; keeps his subsystem decoupled from Alex's FluidNC firmware during parallel Phase 1 work. |
-| Orchestration | Pi sequences both controllers | One brain. No ESP32↔Arduino cross-talk to debug. |
+| Actuator controller | Separate ESP32 (was Arduino), USB serial from Pi | Preserves Akil's working code; keeps his subsystem decoupled from Alex's FluidNC firmware during parallel Phase 1 work. |
+| Orchestration | Pi sequences both controllers | One brain. No gantry↔actuator cross-talk to debug. |
+| Actuator chip | ESP32 instead of Arduino (Oct 14) | Akil's switch. Same USB serial line protocol (§4), no Pi-side code change. Still a separate board from the FluidNC ESP32. |
 | Gantry move completion | Poll FluidNC `?` until `Idle` | Fixed sleeps break the moment acceleration is retuned. |
 | Scan validity | Legal-move match, not confidence | Chess logic is a stronger validator than classifier certainty. |
 | Game state authority | Backend `python-chess` board | Camera proposes a delta; chess rules dispose. Handles illegal moves, topples, and tampering uniformly. |
 | Piece identification | Not performed — occupancy + colour only | Move inference is sufficient and far more reliable. Piece-ID is a stretch goal, off the critical path. |
 | Promotion | Human places the piece, prompted by HMI | Four promotion moves are indistinguishable in occupancy space; gantry piece-swapping is out of scope. |
 | Motion command level | High-level actions, not raw G-code | Keeps the backend testable with no hardware and puts G-code generation behind one owner. |
-| Motion layer location | Python package on the Pi (`/motion`), called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator Arduino. |
+| Motion layer location | Python package on the Pi (`/motion`), called in-process | FluidNC stays stock — no firmware recompile, same reasoning as the separate actuator controller. |
 | G-code generation | Compile the whole move up front, then execute | A move can be printed, hashed and dry-run before anything moves; an unexecutable action list is rejected before the machine is holding a piece. |
 | Move repeatability | Fixed-width coordinates + sequential graveyard slots + per-move checksum | Same move + same `coordinates.json` = byte-identical G-code, so a logged failure is reproducible. |
 | Graveyard slot assignment | Motion layer allocates; backend supplies an optional `color` | Only the backend knows the captured piece's colour; only the motion layer knows which slots are free. |

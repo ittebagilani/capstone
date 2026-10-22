@@ -1,6 +1,6 @@
 """Actuator link: one command per line, one ACK before the next. No fire-and-forget.
 
-Command set and protocol: INTERFACES.md §4. The Arduino ACKs every command with `OK` or
+Command set and protocol: INTERFACES.md §4. The actuator ACKs every command with `OK` or
 `FAULT:<reason>`. `<reason>` is passed straight through to the `move_complete` envelope and
 onto the frontend, so Akil's fault strings become the error strings the operator reads.
 """
@@ -29,7 +29,7 @@ class ActuatorLink:
         self.config = config or MotionConfig()
         self._lock = asyncio.Lock()
         #: Best-effort mirror of magnet state, for logging and post-fault triage. Not trusted
-        #: for control — the Arduino is authoritative.
+        #: for control — the actuator is authoritative.
         self.magnet_on = False
 
     async def open(self) -> None:

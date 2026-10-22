@@ -16,15 +16,18 @@ DETECTOR = aruco.ArucoDetector(DICT, aruco.DetectorParameters())
 WARP_SIZE = 800  # -> 100px/square, CLAUDE.md §7.2
 CALIBRATION_PATH = Path(__file__).parent / "calibration.json"
 
-# Destination corners in the warped image, keyed by marker ID — same corner assignment as
-# generate_markers.py (ID0=a1, ID1=h1, ID2=h8, ID3=a8). a1 is bottom-left (INTERFACES.md §1),
-# so it maps to the bottom-left of the image (high y — image y grows downward).
-DEST_CORNERS = {
-    0: (0, WARP_SIZE),          # a1 -> bottom-left
-    1: (WARP_SIZE, WARP_SIZE),  # h1 -> bottom-right
-    2: (WARP_SIZE, 0),          # h8 -> top-right
-    3: (0, 0),                  # a8 -> top-left
-}
+# Physical marker centres in board-square units: origin at a1's outer corner, x toward the
+# h-file, y toward rank 8. Each marker sits beside the board (ID0=a1, ID1=h1, ID2=h8, ID3=a8),
+# half a square clear of the edge so a piece on a1 can't occlude it. Expressed in squares, not
+# mm, so the same warp works for 40mm and 48mm boards. generate_board.py prints from these.
+MARKER_CENTERS_SQ = {0: (-1.0, 0.5), 1: (9.0, 0.5), 2: (9.0, 7.5), 3: (-1.0, 7.5)}
+MARKER_SIZE_SQ = 0.75  # black area; the white quiet zone fills the rest of a 1-square tile
+
+# Where each marker centre lands in the warped image. Markers sit outside the board, so these
+# fall outside 0..WARP_SIZE — that's what keeps the inner 800x800 exactly the 64 squares.
+# a1 is bottom-left (INTERFACES.md §1); image y grows downward.
+_SQ_PX = WARP_SIZE / 8
+DEST_CORNERS = {i: (x * _SQ_PX, WARP_SIZE - y * _SQ_PX) for i, (x, y) in MARKER_CENTERS_SQ.items()}
 
 
 def detect_markers(frame: np.ndarray) -> dict[int, tuple[float, float]]:

@@ -26,7 +26,7 @@ class LineTransport(Protocol):
 
 
 class SerialLineTransport:
-    """USB serial, for the Arduino (INTERFACES.md §4) and for a USB-tethered ESP32.
+    """USB serial, for the actuator ESP32 (INTERFACES.md §4) and for a USB-tethered ESP32.
 
     pyserial is blocking, so reads and writes go to a thread. One shared lock keeps
     concurrent callers from interleaving half-lines on the wire.
@@ -35,8 +35,8 @@ class SerialLineTransport:
     def __init__(self, port: str, baudrate: int = 115200, *, reset_delay_s: float = 2.0):
         self.port = port
         self.baudrate = baudrate
-        # An Arduino with auto-reset reboots when the port opens and ignores everything sent
-        # during the bootloader window. Skipping this delay loses the first command of the game.
+        # An Arduino or ESP32 dev board reboots when the port opens and ignores everything
+        # sent during the bootloader window. Skipping this delay loses the first command of the game.
         self.reset_delay_s = reset_delay_s
         self._serial = None
         self._lock = asyncio.Lock()

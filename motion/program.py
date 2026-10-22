@@ -46,7 +46,7 @@ class GantryMove:
 
 @dataclass(frozen=True)
 class ActuatorCommand:
-    """One line for Akil's Arduino. ACKed with `OK` or `FAULT:<reason>` before the next."""
+    """One line for Akil's actuator ESP32. ACKed with `OK` or `FAULT:<reason>` before the next."""
 
     command: str
     #: Why this command is here, e.g. "grip e2". Logging only.
@@ -125,7 +125,7 @@ def compile_actions(
 
     steps: list[Step] = [
         # Safety prologue. A program must be safe to start from any machine state, and an XY
-        # move with the actuator still lowered rakes the magnet across the board. The Arduino
+        # move with the actuator still lowered rakes the magnet across the board. The actuator
         # treats an UP it is already at as a no-op.
         ActuatorCommand(UP, "safety: clear the board before any XY move"),
     ]
