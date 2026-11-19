@@ -288,6 +288,11 @@ CXRA_VISION=real uvicorn backend.app:app --host 0.0.0.0   # use the Pi camera in
 
 python scripts/show_gcode.py e2e4       # print the exact machine program for one move
 python scripts/show_gcode.py --fen "<fen>" e1g1 --gcode-only > move.nc
+
+PYTHONPATH=. python scripts/scan_once.py           # one live scan + the numbers behind each square
+PYTHONPATH=. python scripts/live_view.py           # live per-square overlay (needs display)
+PYTHONPATH=. python vision/capture_samples.py      # labelled scans through the real scan() pipeline
+PYTHONPATH=. python vision/evaluate.py vision/samples/<session>   # board/square accuracy + confusion
 ```
 
 Motion defaults to simulated (`CXRA_MOTION=sim`): every move is compiled to real G-code and
@@ -586,6 +591,12 @@ neighbour. Partly mitigated by smaller steel discs and a narrower magnet pole.
 
 Since a premade frame is likely, **the machine's work area should gate square size**, not the
 reverse. Resolve before ordering. Magnet-vs-spacing math at 40mm is the outstanding analysis.
+
+**Prototype board in use (Nov 19):** printed, **32.5 mm squares** (260 mm board), camera ~45 cm
+above. Not confirmed final. If it becomes final, log it here and in INTERFACES.md and tell Alex,
+since `coordinates.json` depends on it. Vision is unaffected (homography works in square units).
+Markers for this board: `PYTHONPATH=. python vision/generate_board.py --square-mm 32.5`; the
+loose 40 mm tiles from `generate_markers.py` are superseded.
 
 ### 8.4 Camera mounting constraint
 

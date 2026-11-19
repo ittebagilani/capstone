@@ -13,3 +13,6 @@ vision/calibration.json
 vision/empty_reference.png
 logs/
 frontend/dist/
+
+# labelled capture sessions (prototype data, large; not the final dataset)
+vision/samples/
