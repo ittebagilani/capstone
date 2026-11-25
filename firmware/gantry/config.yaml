@@ -1,0 +1,111 @@
+# CXRA gantry: FluidNC config ported from Alex's ChessGantryBoard.ino.
+#
+# Same ESP32, same wiring, same TMC5160 settings, same homing order. FluidNC replaces the
+# sketch so the Pi's motion layer (motion/fluidnc.py: G1 moves, `ok`, `?` -> Idle, $H) drives
+# it unchanged. Upload as `config.yaml` via the FluidNC web UI or `$LocalFS/...`, then reboot.
+#
+# Values marked VERIFY are carried over from the sketch's own "verify" comments or are
+# placeholders; check each on the machine. See firmware/gantry/README.md for the bring-up order.
+
+name: CXRA gantry
+board: ESP32 DevKit (Alex's CoreXY board)
+
+kinematics:
+  CoreXY:
+
+stepping:
+  engine: RMT
+  idle_ms: 255            # 255 = never disable; holds position between moves like the sketch
+  pulse_us: 4
+  dir_delay_us: 1
+  disable_delay_us: 0
+
+spi:
+  miso_pin: gpio.19
+  mosi_pin: gpio.23
+  sck_pin: gpio.18
+
+axes:
+  # Steps/mm: 200 steps/rev * 16 microsteps / (2 mm GT2 pitch * 20 teeth) = 80.
+  # VERIFY pulley teeth and belt pitch (the sketch flags the same thing).
+  #
+  # CoreXY motor mapping. FluidNC drives motor X = x + y, motor Y = x - y. The sketch drives
+  # A = -x + y, B = -x - y (DIR HIGH = positive). So FluidNC's X motor is the sketch's motor B
+  # with direction inverted, and FluidNC's Y motor is motor A, inverted. The x/y frame matches
+  # the sketch, so positions read with `P` there mean the same thing here.
+  #
+  # Rates: the sketch defaults to 500 events/s (6.25 mm/s) and was tested up to RATE 2000 /
+  # ACCEL 3000 (25 mm/s, 37.5 mm/s^2). Raised to 60 mm/s, 100 mm/s^2 on 2026-11-25 (no actuator head yet; 50 mm/s ran clean).
+  # The Pi requests F6000; FluidNC clamps that to max_rate_mm_per_min.
+
+  x:
+    steps_per_mm: 80
+    max_rate_mm_per_min: 3600
+    acceleration_mm_per_sec2: 100
+    max_travel_mm: 450      # VERIFY: measure; must cover board + graveyard (437.5 mm in coordinates.json)
+    soft_limits: true
+    homing:
+      cycle: 2              # sketch homes Y first, then X. CoreXY can't share a cycle.
+      positive_direction: false
+      mpos_mm: 5              # = pulloff_mm, so 0 = switch trigger point. Also the soft-limit minimum.
+      seek_mm_per_min: 1800 # 30 mm/s (2026-11-25); overshoot ~4.5 mm at 100 mm/s^2, inside the pull-off
+      feed_mm_per_min: 125  # sketch SLOW_DELAY: ~167 steps/s
+      settle_ms: 200
+      seek_scaler: 1.1
+      feed_scaler: 1.1
+    motor0:
+      limit_neg_pin: gpio.22:low:pu    # X reed switch, active LOW, internal pull-up
+      hard_limits: false
+      pulloff_mm: 5                    # X only: lets the head reach X 5 (home-side graveyard). Y needs 10.
+      tmc_5160:
+        cs_pin: gpio.14
+        spi_index: -1                  # independent CS, not daisy-chained
+        r_sense_ohms: 0.075
+        run_amps: 0.8
+        hold_amps: 0.5
+        microsteps: 16
+        toff_coolstep: 4               # sketch: toff(4), en_pwm_mode(false) = SpreadCycle
+        run_mode: CoolStep
+        homing_mode: CoolStep
+        stallguard: 0
+        stallguard_debug: false
+        use_enable: false
+        step_pin: gpio.32
+        direction_pin: gpio.33         # sketch motor B (direction verified on the machine 2026-11-24)
+        disable_pin: gpio.13           # EN is active-low on the TMC5160: HIGH disables
+
+  y:
+    steps_per_mm: 80
+    max_rate_mm_per_min: 3600
+    acceleration_mm_per_sec2: 100
+    max_travel_mm: 320      # VERIFY: measure; must cover board (280 mm in coordinates.json)
+    soft_limits: true
+    homing:
+      cycle: 1
+      positive_direction: false
+      mpos_mm: 10             # position after the 10 mm pull-off, so 0 = switch trigger point, the zero Alex measured from
+      seek_mm_per_min: 1800
+      feed_mm_per_min: 125
+      settle_ms: 200
+      seek_scaler: 1.1
+      feed_scaler: 1.1
+    motor0:
+      limit_neg_pin: gpio.21:low:pu    # Y reed switch
+      hard_limits: false
+      pulloff_mm: 10
+      tmc_5160:
+        cs_pin: gpio.5
+        spi_index: -1
+        r_sense_ohms: 0.075
+        run_amps: 0.8
+        hold_amps: 0.5
+        microsteps: 16
+        toff_coolstep: 4
+        run_mode: CoolStep
+        homing_mode: CoolStep
+        stallguard: 0
+        stallguard_debug: false
+        use_enable: false
+        step_pin: gpio.25
+        direction_pin: gpio.26         # sketch motor A (direction verified on the machine 2026-11-24)
+        disable_pin: gpio.27

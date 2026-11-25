@@ -9,3 +9,4 @@ opencv-contrib-python==5.0.0.93
 numpy==2.4.6
 pillow==12.3.0
 pyserial==3.5
+xmodem==0.4.7
