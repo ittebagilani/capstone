@@ -159,3 +159,33 @@ class FakeTransport:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class SimActuatorTransport:
+    """Stands in for Akil's actuator ESP32: logs each command and answers `OK`.
+
+    `CXRA_ACTUATOR=sim` with `CXRA_MOTION=real` drives the real gantry through every move while
+    the magnet commands only go to the log. That's the dry run for coordinates and move
+    sequencing before the actuator is attached.
+    """
+
+    def __init__(self):
+        import logging
+
+        self._log = logging.getLogger("cxra.motion.actuator")
+        self._replies: list[str] = []
+
+    async def open(self) -> None:
+        self._log.info("actuator: SIMULATED (CXRA_ACTUATOR=sim). Magnet commands are logged, not sent")
+
+    async def write_line(self, line: str) -> None:
+        self._log.info("actuator (sim) > %s", line)
+        self._replies.append("OK")
+
+    async def read_line(self, timeout: float) -> str:
+        if not self._replies:
+            raise asyncio.TimeoutError
+        return self._replies.pop(0)
+
+    async def close(self) -> None:
+        pass

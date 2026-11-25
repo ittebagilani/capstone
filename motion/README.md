@@ -127,8 +127,8 @@ On the Pi with hardware attached:
 
 ```bash
 export CXRA_MOTION=real
-export CXRA_GANTRY=192.168.1.50           # or /dev/ttyUSB0 for a USB-tethered ESP32
-export CXRA_ACTUATOR=/dev/ttyACM0
+export CXRA_GANTRY=172.20.10.10           # FluidNC over WiFi (hotspot `itteba`, fixed IP), or /dev/serial/by-id/... over USB
+export CXRA_ACTUATOR=/dev/ttyACM0          # or `sim`: real gantry, actuator commands only logged (dry run)
 export CXRA_COORDINATES=firmware/coordinates.json   # optional, this is the default
 uvicorn backend.app:app
 ```
@@ -146,7 +146,9 @@ home, so an un-homed machine puts every piece in the wrong place.
   magnet in the gaps between squares.
 - **`coordinates.json` does not exist yet.** It is generated during gantry calibration and is
   Alex's to produce (INTERFACES.md §5). Nothing here fabricates one. Until it lands, `sim`
-  falls back to the synthetic grid.
+  falls back to the synthetic grid. To generate it: home the gantry, jog over the centres of
+  a1, h1, a8, h8, then `python scripts/make_coordinates.py --a1 X Y --h1 X Y --a8 X Y --h8 X Y`
+  (`motion/calibration.py`: bilinear interpolation, graveyard beyond the far file).
 - **`travel_feed_mm_min` is a guess at 6000.** These frames are sold for a ~200g laser
   module; the pick-and-place head is 400–600g. Set it from what the machine can actually
   carry without skipping steps, then write the measured number into `config.py`.

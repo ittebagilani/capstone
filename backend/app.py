@@ -18,6 +18,7 @@ Env: CXRA_VISION=fake|real (default fake), CXRA_MOTION (see motion/factory.py),
 CXRA_SCAN_LOG (default logs/scans.jsonl). Serves the built HMI from frontend/dist at /.
 """
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,6 +32,11 @@ from backend.fake_vision import FakeVision
 from backend.state import GameLoop, GameState
 from motion.executor import MotionExecutor
 from motion.factory import build_executor
+
+# uvicorn only configures its own loggers; without this every `cxra.*` INFO line (each
+# move's G-code listing, scan confidences) is silently dropped.
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
+logging.getLogger("cxra").setLevel(logging.INFO)
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = ROOT / "frontend" / "dist"

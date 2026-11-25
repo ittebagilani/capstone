@@ -8,6 +8,7 @@ Real mode reads:
     CXRA_GANTRY=192.168.1.50        FluidNC over WiFi (telnet, port 23)
     CXRA_GANTRY=/dev/ttyUSB0        FluidNC over USB serial
     CXRA_ACTUATOR=/dev/ttyACM0      Akil's actuator ESP32
+    CXRA_ACTUATOR=sim               real gantry, actuator commands only logged (dry run)
     CXRA_COORDINATES=/path.json     defaults to firmware/coordinates.json
 """
 import os
@@ -18,7 +19,7 @@ from motion.config import MotionConfig
 from motion.coordinates import CoordinateTable
 from motion.executor import MotionExecutor, SimulatedExecutor
 from motion.fluidnc import FluidNCLink
-from motion.transport import SerialLineTransport, TelnetLineTransport
+from motion.transport import SerialLineTransport, SimActuatorTransport, TelnetLineTransport
 
 
 def _gantry_transport(target: str):
@@ -53,7 +54,8 @@ def build_executor(mode: Optional[str] = None, config: Optional[MotionConfig] = 
         return MotionExecutor(
             table,
             FluidNCLink(_gantry_transport(gantry_target), config),
-            ActuatorLink(SerialLineTransport(actuator_port), config),
+            ActuatorLink(SimActuatorTransport() if actuator_port.lower() == "sim"
+                         else SerialLineTransport(actuator_port), config),
             config,
         )
 

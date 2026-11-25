@@ -27,6 +27,10 @@ class MotionConfig:
     #: board-width move at a slow feed plus acceleration is still well under this.
     idle_timeout_s: float = 30.0
 
+    #: Seconds to wait for `$H` to finish. Homing seeks at 375 mm/min (firmware/gantry/config.yaml),
+    #: so a full-travel Y seek plus X seek and both slow re-approaches is well over a minute.
+    home_timeout_s: float = 180.0
+
     #: Seconds between `?` status polls while waiting for Idle. Never a fixed sleep instead
     #: of polling — that breaks the moment acceleration is retuned (CLAUDE.md §3.4).
     idle_poll_interval_s: float = 0.05

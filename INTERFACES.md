@@ -365,6 +365,7 @@ you have real confidence distributions; put the tuned number here and stop touch
 | Move repeatability | Fixed-width coordinates + sequential graveyard slots + per-move checksum | Same move + same `coordinates.json` = byte-identical G-code, so a logged failure is reproducible. |
 | Graveyard slot assignment | Motion layer allocates; backend supplies an optional `color` | Only the backend knows the captured piece's colour; only the motion layer knows which slots are free. |
 | Gantry fault handling | Stop, report, route to `recovery`. No auto-retry. | The board is out of sync with stored state; a human restoring it is the existing, safe answer. |
+| Gantry link drop (Nov 25) | Reconnect once and resend the same line; faults still stop | A dead WiFi socket is not a machine fault. Every gantry line is idempotent (`G21`, `G90`, absolute `G1`, `?`), so resending lands in the same place. Alarms, rejections and timeouts still go to `recovery`. |
 
 **Open items blocking Phase 1 completion:**
 

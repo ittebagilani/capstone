@@ -11,7 +11,7 @@ import logging
 import re
 
 from motion.config import MotionConfig
-from motion.transport import LineTransport
+from motion.transport import LineTransport, TransportError
 
 log = logging.getLogger("cxra.motion.gantry")
 
@@ -20,6 +20,13 @@ STATUS_RE = re.compile(r"^<([A-Za-z]+)[:|>]")
 
 #: States that mean the machine is not going to become Idle on its own.
 HALTED_STATES = {"Alarm", "Door", "Sleep"}
+
+
+def _link_down(exc: BaseException) -> bool:
+    """A dead connection (WiFi drop, ESP32 reconnect, unplugged cable), as opposed to FluidNC
+    answering badly. Timeouts are excluded: those are converted to GantryError where they
+    happen and mean the machine itself didn't respond in time."""
+    return isinstance(exc, (ConnectionError, TransportError, OSError)) and not isinstance(exc, TimeoutError)
 
 
 class GantryError(RuntimeError):
@@ -45,6 +52,33 @@ class FluidNCLink:
     async def close(self) -> None:
         await self.transport.close()
 
+    async def _reconnect(self) -> None:
+        try:
+            await self.transport.close()
+        except Exception:
+            pass
+        await self.transport.open()
+        await self._drain()
+
+    async def _with_reconnect(self, what: str, op):
+        """Run `op()`; if the link turns out to be dead, reconnect once and run it again.
+
+        Safe because everything sent through here is idempotent: unit/mode lines, absolute
+        `G90 G1` moves to a fixed point, and `?`. Resending lands in the same place. This is
+        a link repair, not a fault retry: alarms, rejections and timeouts are GantryErrors
+        and still stop the move (the "no auto-retry" decision, INTERFACES.md).
+        Over WiFi the one long-lived telnet socket can die between moves; without this,
+        every later move fails with "Connection reset by peer" (seen 2026-11-25).
+        """
+        try:
+            return await op()
+        except Exception as exc:
+            if not _link_down(exc):
+                raise
+            log.warning("gantry link lost during %s (%s); reconnecting once", what, exc)
+        await self._reconnect()
+        return await op()
+
     async def _drain(self) -> None:
         while True:
             try:
@@ -59,10 +93,13 @@ class FluidNCLink:
         Push messages (`<...>` status, `[...]` feedback) can arrive at any moment and are
         skipped — only `ok` and `error:N` end the wait.
         """
-        async with self._lock:
+        async def op():
             log.debug("gantry > %s", line)
             await self.transport.write_line(line)
             await self._await_ok(line)
+
+        async with self._lock:
+            await self._with_reconnect(repr(line), op)
 
     async def _await_ok(self, sent: str, timeout: float | None = None) -> None:
         timeout = self.config.ack_timeout_s if timeout is None else timeout
@@ -86,7 +123,7 @@ class FluidNCLink:
 
     async def status(self) -> str:
         """One real-time status query. `?` is a real-time command — no newline, no `ok`."""
-        async with self._lock:
+        async def op():
             await self.transport.write_line("?")
             deadline = asyncio.get_running_loop().time() + self.config.ack_timeout_s
             while True:
@@ -100,6 +137,9 @@ class FluidNCLink:
                 match = STATUS_RE.match(reply)
                 if match:
                     return match.group(1)
+
+        async with self._lock:
+            return await self._with_reconnect("status query", op)
 
     async def wait_idle(self) -> None:
         """Block until the machine has actually finished moving."""
@@ -131,7 +171,7 @@ class FluidNCLink:
             await self.transport.write_line("$H")
             # FluidNC only answers `ok` once the homing cycle has finished, which is far
             # longer than a normal line ack — a 5s ack timeout would fail every time.
-            await self._await_ok("$H", timeout=self.config.idle_timeout_s)
+            await self._await_ok("$H", timeout=self.config.home_timeout_s)
         await self.wait_idle()
 
     async def unlock(self) -> None:
