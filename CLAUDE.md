@@ -286,6 +286,11 @@ uvicorn backend.app:app --host 0.0.0.0  # backend + built HMI at http://<pi>:800
 CXRA_VISION=real uvicorn backend.app:app --host 0.0.0.0   # use the Pi camera instead of FakeVision
 (cd frontend && npm install && npm run build)               # rebuild the HMI after frontend changes
 
+python scripts/gantry.py send '?'    # gantry ESP32 (FluidNC) from the Pi: flash, upload, send, term — see firmware/gantry/README.md
+python scripts/gantry.py --host 172.20.10.10 send '?'   # same over WiFi (Pi and ESP32 on hotspot `itteba`)
+python scripts/calibrate_ui.py [--host 172.20.10.10]     # web page :8001 — jog, mark corners/graveyard, save coordinates.json
+CXRA_MOTION=real CXRA_GANTRY=172.20.10.10 CXRA_ACTUATOR=sim uvicorn backend.app:app --host 0.0.0.0   # real gantry, logged actuator
+python scripts/make_coordinates.py --h8 X Y --pitch 35   # regenerate firmware/coordinates.json
 python scripts/show_gcode.py e2e4       # print the exact machine program for one move
 python scripts/show_gcode.py --fen "<fen>" e1g1 --gcode-only > move.nc
 
@@ -592,10 +597,10 @@ neighbour. Partly mitigated by smaller steel discs and a narrower magnet pole.
 Since a premade frame is likely, **the machine's work area should gate square size**, not the
 reverse. Resolve before ordering. Magnet-vs-spacing math at 40mm is the outstanding analysis.
 
-**Prototype board in use (Nov 19):** printed, **32.5 mm squares** (260 mm board), camera ~45 cm
+**Prototype board in use (Nov 24):** **35 mm squares** (280 mm board; was 32.5 mm on Nov 19), camera ~45 cm
 above. Not confirmed final. If it becomes final, log it here and in INTERFACES.md and tell Alex,
 since `coordinates.json` depends on it. Vision is unaffected (homography works in square units).
-Markers for this board: `PYTHONPATH=. python vision/generate_board.py --square-mm 32.5`; the
+Markers for this board: `PYTHONPATH=. python vision/generate_board.py --square-mm 35`; the
 loose 40 mm tiles from `generate_markers.py` are superseded.
 
 ### 8.4 Camera mounting constraint
